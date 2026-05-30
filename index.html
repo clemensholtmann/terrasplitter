@@ -37,6 +37,7 @@
   button:hover { background: var(--bg2); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   input[type="number"], select { height: 32px; padding: 0 8px; }
+  input[type="text"], input[type="password"] { height: 32px; padding: 0 8px; width: 100%; }
   .card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 12px 16px; }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; display: inline-block; }
   .badge-success { background: var(--success-bg); color: var(--success); }
@@ -61,13 +62,112 @@ const CC = [
 ];
 const ADDR_CC = { euref:["1001","1002","1003","1005"], hermannstr:["1001","1002","1004"] };
 const SKEY = "terra-splits-v4";
+const GIST_SKEY = "terra-gist-config";
 const KS_MIRROR = { "1004":"1005", "1005":"1004" };
 
-let S = { step:"upload", invoice:null, rowSplits:{}, savedSplits:{}, loading:false, error:null, bookmarklet:null, copied:false };
+let S = { step:"upload", invoice:null, rowSplits:{}, savedSplits:{}, loading:false, error:null, bookmarklet:null, copied:false, gistSaving:false, gistError:null };
 function set(p){ S={...S,...p}; render(); }
 
+// ── localStorage helpers ──────────────────────────────────────────────────────
 function loadSaved(){ try{ const r=localStorage.getItem(SKEY); return r?JSON.parse(r):{}; }catch{ return {}; } }
 function doSave(s){ try{ localStorage.setItem(SKEY,JSON.stringify(s)); }catch{} }
+function loadGistConfig(){ try{ const r=localStorage.getItem(GIST_SKEY); return r?JSON.parse(r):{}; }catch{ return {}; } }
+function saveGistConfig(cfg){ try{ localStorage.setItem(GIST_SKEY,JSON.stringify(cfg)); }catch{} }
+
+// ── Gist API ──────────────────────────────────────────────────────────────────
+async function gistWrite(pos){
+  const cfg = loadGistConfig();
+  if(!cfg.token) throw new Error("Kein GitHub Token hinterlegt.");
+  const body = JSON.stringify({pos});
+  const headers = { "Authorization":"token "+cfg.token, "Content-Type":"application/json" };
+
+  if(cfg.gistId){
+    // Update existing gist
+    const res = await fetch("https://api.github.com/gists/"+cfg.gistId, {
+      method:"PATCH", headers,
+      body: JSON.stringify({ files:{ "candis-positionen.json":{ content:body } } })
+    });
+    if(!res.ok){ const e=await res.json(); throw new Error(e.message||"Gist-Update fehlgeschlagen"); }
+    return cfg.gistId;
+  } else {
+    // Create new secret gist
+    const res = await fetch("https://api.github.com/gists", {
+      method:"POST", headers,
+      body: JSON.stringify({
+        description:"Terra Rechnungs-Splitter – Candis Positionen",
+        public: false,
+        files:{ "candis-positionen.json":{ content:body } }
+      })
+    });
+    if(!res.ok){ const e=await res.json(); throw new Error(e.message||"Gist-Erstellung fehlgeschlagen"); }
+    const data = await res.json();
+    saveGistConfig({...cfg, gistId:data.id});
+    return data.id;
+  }
+}
+
+function makeRawUrl(gistId){
+  // Raw URL without revision hash – always returns latest content
+  return "https://gist.githubusercontent.com/raw/"+gistId+"/candis-positionen.json";
+}
+
+// ── Bookmarklet ───────────────────────────────────────────────────────────────
+function makeBM(rawUrl){
+  const code = `(function(){
+  var RAWURL="${rawUrl}";
+  var existing=document.getElementById("terra-bm-panel");
+  if(existing){existing.remove();return;}
+  var panel=document.createElement("div");
+  panel.id="terra-bm-panel";
+  panel.style.cssText="position:fixed;top:33vh;right:30%;z-index:999999;background:#fff;border:1px solid #ccc;border-radius:10px;padding:14px 16px;font-family:system-ui,sans-serif;font-size:13px;color:#1a1a18;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:280px;max-width:340px";
+  panel.innerHTML="<div id='terra-bm-handle' style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:grab;user-select:none'><strong style='font-size:14px'>Candis Positionen</strong><button id='terra-bm-close' style='border:none;background:none;cursor:pointer;font-size:18px;color:#888;padding:0;line-height:1'>\xd7</button></div><div id='terra-bm-body' style='font-size:13px;color:#6b6b67'>Lade...</div>";
+  document.body.appendChild(panel);
+  document.getElementById("terra-bm-close").addEventListener("click",function(){panel.remove();});
+  var handle=document.getElementById("terra-bm-handle");
+  var ox=0,oy=0,sx=0,sy=0;
+  handle.addEventListener("mousedown",function(e){
+    if(e.target.tagName==="BUTTON") return;
+    e.preventDefault();
+    var r=panel.getBoundingClientRect();
+    sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;
+    handle.style.cursor="grabbing";
+    function mv(e){panel.style.left=(ox+(e.clientX-sx))+"px";panel.style.top=(oy+(e.clientY-sy))+"px";panel.style.right="auto";}
+    function up(){handle.style.cursor="grab";document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);}
+    document.addEventListener("mousemove",mv);
+    document.addEventListener("mouseup",up);
+  });
+  fetch(RAWURL+"?t="+Date.now())
+    .then(function(r){return r.json();})
+    .then(function(data){
+      var pos=data.pos||[];
+      var html="";
+      pos.forEach(function(p){
+        var neg=p.neg?"color:#a32d2d":"color:#1a1a18";
+        var label=p.neg?" RK":"";
+        var val=p.amount.toFixed(2).replace(".",",");
+        html+="<div style='display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #f0efe9'>"
+          +"<span style='flex:1;min-width:0'><span style='font-weight:500'>"+p.ksId+"</span> <span style='color:#6b6b67;font-size:12px'>"+p.ksName+"</span><br><span style='font-size:11px;color:#9b9b97'>"+p.tax+"% MwSt.</span></span>"
+          +"<span style='font-weight:500;white-space:nowrap;"+neg+"'>"+val+" \u20ac"+label+"</span>"
+          +"<button class='terra-cp' data-val='"+val+"' style='padding:3px 10px;border:1px solid #ccc;border-radius:6px;background:#f7f7f5;cursor:pointer;font-size:12px;white-space:nowrap;font-family:inherit'>Kopieren</button>"
+          +"</div>";
+      });
+      html+="<div style='margin-top:10px;font-size:11px;color:#9b9b97;text-align:center'>Brutto \u00b7 zum Einf\u00fcgen in Candis</div>";
+      document.getElementById("terra-bm-body").innerHTML=html;
+      panel.querySelectorAll(".terra-cp").forEach(function(btn){
+        btn.addEventListener("click",function(){
+          navigator.clipboard.writeText(btn.dataset.val).then(function(){
+            var o=btn.textContent;btn.textContent="\u2713";
+            btn.style.cssText+=";background:#eaf3de;border-color:#3b6d11;color:#3b6d11";
+            setTimeout(function(){btn.textContent=o;btn.style.background="";btn.style.borderColor="";btn.style.color="";},1500);
+          });
+        });
+      });
+    })
+    .catch(function(e){document.getElementById("terra-bm-body").textContent="Fehler: "+e.message;});
+})();`;
+  return "javascript:"+encodeURIComponent(code);
+}
+
 function isExp(ts){ return !ts||(Date.now()-new Date(ts))/864e5/7>10; }
 
 function getSaved(saved,artNr,addr){
@@ -193,73 +293,6 @@ function calcPos(){
   });
 }
 
-const CANDIS_KEY = "terra-candis-pos";
-function saveForCandis(pos){
-  try{ localStorage.setItem(CANDIS_KEY, JSON.stringify(pos)); }catch{}
-}
-
-function makeBM(pos){
-  const posJSON = JSON.stringify(pos);
-  const code = `(function(){
-  var pos=${posJSON};
-  var existing=document.getElementById("terra-bm-panel");
-  if(existing){existing.remove();return;}
-  var panel=document.createElement("div");
-  panel.id="terra-bm-panel";
-  panel.style.cssText="position:fixed;top:80px;right:24px;z-index:999999;background:#fff;border:1px solid #ccc;border-radius:10px;padding:14px 16px;font-family:system-ui,sans-serif;font-size:13px;color:#1a1a18;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:280px;max-width:340px";
-  var html="<div id='terra-bm-handle' style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:grab;user-select:none'><strong style='font-size:14px'>Candis Positionen</strong><button id='terra-bm-close' style='border:none;background:none;cursor:pointer;font-size:18px;color:#888;padding:0;line-height:1'>x</button></div>";
-  pos.forEach(function(p){
-    var neg=p.neg?"color:#a32d2d":"color:#1a1a18";
-    var label=p.neg?" RK":"";
-    var val=p.amount.toFixed(2).replace(".",",");
-    html+="<div style='display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #f0efe9'>"
-      +"<span style='flex:1;min-width:0'><span style='font-weight:500'>"+p.ksId+"</span> <span style='color:#6b6b67;font-size:12px'>"+p.ksName+"</span><br><span style='font-size:11px;color:#9b9b97'>"+p.tax+"% MwSt.</span></span>"
-      +"<span style='font-weight:500;white-space:nowrap;"+neg+"'>"+val+" €"+label+"</span>"
-      +"<button class='terra-bm-copy' data-val='"+val+"' style='padding:3px 10px;border:1px solid #ccc;border-radius:6px;background:#f7f7f5;cursor:pointer;font-size:12px;white-space:nowrap;font-family:inherit'>Kopieren</button>"
-      +"</div>";
-  });
-  html+="<div style='margin-top:10px;font-size:11px;color:#9b9b97;text-align:center'>Brutto - zum Einfügen in Candis</div>";
-  panel.innerHTML=html;
-  document.body.appendChild(panel);
-  document.getElementById("terra-bm-close").addEventListener("click",function(){panel.remove();});
-  panel.querySelectorAll(".terra-bm-copy").forEach(function(btn){
-    btn.addEventListener("click",function(){
-      navigator.clipboard.writeText(btn.dataset.val).then(function(){
-        var orig=btn.textContent;
-        btn.textContent="v";
-        btn.style.background="#eaf3de";
-        btn.style.borderColor="#3b6d11";
-        btn.style.color="#3b6d11";
-        setTimeout(function(){btn.textContent=orig;btn.style.background="";btn.style.borderColor="";btn.style.color="";},1500);
-      });
-    });
-  });
-  var handle=document.getElementById("terra-bm-handle");
-  var ox=0,oy=0,startX=0,startY=0;
-  handle.addEventListener("mousedown",function(e){
-    if(e.target.tagName==="BUTTON") return;
-    e.preventDefault();
-    var rect=panel.getBoundingClientRect();
-    startX=e.clientX; startY=e.clientY;
-    ox=rect.left; oy=rect.top;
-    handle.style.cursor="grabbing";
-    function onMove(e){
-      panel.style.left=(ox+(e.clientX-startX))+"px";
-      panel.style.top=(oy+(e.clientY-startY))+"px";
-      panel.style.right="auto";
-    }
-    function onUp(){
-      handle.style.cursor="grab";
-      document.removeEventListener("mousemove",onMove);
-      document.removeEventListener("mouseup",onUp);
-    }
-    document.addEventListener("mousemove",onMove);
-    document.addEventListener("mouseup",onUp);
-  });
-})();`;
-  return "javascript:"+encodeURIComponent(code);
-}
-
 async function handleFile(file){
   if(!file||!file.name.endsWith(".pdf")){set({error:"Nur PDF-Dateien."}); return;}
   set({loading:true,error:null});
@@ -315,7 +348,7 @@ function updateSummary(){
   const df=document.getElementById("pos-diff");
   if(df) df.innerHTML=!balanced?`Rechnungsbetrag: ${eur(brutto)} · Differenz: ${eur(Math.abs(posTotal-brutto))}`:"";
   const cb=document.getElementById("btn-confirm");
-  if(cb){cb.disabled=!allOk||!balanced;cb.textContent=allOk&&balanced?"Speichern & Bookmarklet erstellen →":!allOk?"Aufteilung unvollständig":"Differenz: "+eur(Math.abs(posTotal-brutto));}
+  if(cb){cb.disabled=!allOk||!balanced;cb.textContent=allOk&&balanced?"Speichern & in Candis übertragen →":!allOk?"Aufteilung unvollständig":"Differenz: "+eur(Math.abs(posTotal-brutto));}
   const sb=document.getElementById("btn-save-only");
   if(sb) sb.disabled=!allOk;
   const wb=document.getElementById("warn-diff");
@@ -334,6 +367,7 @@ function icon(name){
     "upload":`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
     "edit":`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
     "save":`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>`,
+    "key":`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M21 2l-9.6 9.6"/><path d="M15.5 7.5l3 3L22 7l-3-3"/></svg>`,
   };
   return icons[name]||"";
 }
@@ -344,7 +378,16 @@ function render(){
   attach();
 }
 
-function renderUpload(){ return `
+// ── Upload screen ─────────────────────────────────────────────────────────────
+function renderUpload(){
+  const cfg = loadGistConfig();
+  const hasToken = !!cfg.token;
+  const hasGist = !!cfg.gistId;
+  const tokenStatus = hasToken
+    ? `<span class="badge badge-success">${icon("check")} Token gespeichert${hasGist?" · Gist vorhanden":""}</span>`
+    : `<span class="badge badge-warning">Kein Token – bitte unten eintragen</span>`;
+
+  return `
 <div style="background:var(--bg);border-radius:var(--radius-lg);padding:2rem;margin-top:1rem">
   <h2 style="margin-bottom:6px">Terra Rechnungs-Splitter</h2>
   <p style="margin-bottom:6px">PDF hochladen · Kostenstellen prüfen · In Candis übertragen</p>
@@ -356,8 +399,29 @@ function renderUpload(){ return `
   </label>
   ${S.loading?'<p style="margin-top:12px;color:var(--text2)">Rechnung wird analysiert…</p>':''}
   ${S.error?`<p style="margin-top:12px;color:var(--danger)">${S.error}</p>`:''}
+
+  <div class="card" style="margin-top:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <p style="font-weight:500;font-size:13px">${icon("key")} GitHub Token</p>
+      ${tokenStatus}
+    </div>
+    ${!hasToken ? `
+    <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
+      Für automatische Candis-Updates: <a href="https://github.com/settings/tokens/new?scopes=gist&description=Terra+Splitter" target="_blank" style="color:var(--info)">Token erstellen</a> (nur „gist"-Scope nötig), dann hier einfügen.
+    </p>
+    <div style="display:flex;gap:8px">
+      <input type="password" id="token-input" placeholder="ghp_..." style="flex:1">
+      <button id="btn-save-token">Speichern</button>
+    </div>
+    ${S.error?`<p style="margin-top:6px;font-size:12px;color:var(--danger)">${S.error}</p>`:''}
+    ` : `
+    <p style="font-size:12px;color:var(--text2);margin-bottom:8px">Das Bookmarklet liest die Positionen direkt aus dem Gist – immer aktuell.</p>
+    <button id="btn-clear-token" style="font-size:12px;padding:4px 10px;color:var(--danger);border-color:var(--danger)">Token entfernen</button>
+    `}
+  </div>
 </div>`; }
 
+// ── Review screen ─────────────────────────────────────────────────────────────
 function renderReview(){
   const{invoice,rowSplits,savedSplits}=S;
   const avail=getAvail(invoice.addr);
@@ -385,7 +449,7 @@ function renderReview(){
   <span style="font-size:13px;color:var(--text2)">%</span>
   <span id="sa-${item.artNr}-${i}" style="font-size:13px;min-width:62px;text-align:right;color:var(--text2)">${eur(b)}<br><span style="font-size:11px;color:var(--text3)">${eur(n)} netto</span></span>
   ${sps.length>1?`<button data-rm="${item.artNr}" data-ri="${i}" style="padding:0 8px;height:32px">${icon("x")}</button>`:""}
-</div>`;}).join("");
+</div>`; }).join("");
     return `<div id="row-${item.artNr}" style="border:0.5px solid ${bc};border-radius:var(--radius-lg);padding:10px 14px;margin-bottom:6px;background:var(--bg)">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
     <div style="flex:1;min-width:0">
@@ -404,6 +468,11 @@ function renderReview(){
   const pfandLine=[invoice.taxBrutto.P7?`7%: ${eur(invoice.taxBrutto.P7)}`:"",invoice.taxBrutto.P19?`19%: ${eur(invoice.taxBrutto.P19)}`:""].filter(Boolean).join(" · ");
   const nettoTotal=pos.reduce((s,p)=>s+p.netto,0);
   const posRows=pos.map(p=>`<tr><td>${p.ksId} – ${p.ksName}</td><td style="text-align:right;color:var(--text2)">${p.tax}%</td><td style="text-align:right;font-weight:500;color:${p.neg?"var(--danger)":"var(--text)"}">${eur(p.netto)}</td><td style="text-align:right;font-weight:500;color:${p.neg?"var(--danger)":"var(--text)"}">${eur(p.amount)}</td></tr>`).join("");
+
+  const confirmLabel = S.gistSaving ? "Wird gespeichert…"
+    : allOk&&balanced ? "Speichern & in Candis übertragen →"
+    : !allOk ? "Aufteilung unvollständig"
+    : "Differenz: "+eur(Math.abs(posTotal-brutto));
 
   return `
 <div id="warn-diff" style="display:${balanced?"none":"block"};background:var(--danger-bg);border:0.5px solid var(--danger);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:13px;color:var(--danger)">⚠ Differenz: Rechnung wurde nicht richtig erkannt.</div>
@@ -439,17 +508,20 @@ ${rows}
     </tfoot>
   </table>
 </div>
+${S.gistError?`<p style="font-size:12px;color:var(--danger);margin-bottom:8px">⚠ Gist-Fehler: ${S.gistError}</p>`:''}
 <p style="font-size:12px;color:var(--text3);margin-bottom:8px">${icon("save")} Zuordnungen werden beim Bestätigen für ${addrLabel} gespeichert.</p>
-<button id="btn-confirm" class="btn-primary" style="margin-bottom:8px" ${!allOk||!balanced?"disabled":""}>
-  ${allOk&&balanced?"Speichern & Bookmarklet erstellen →":!allOk?"Aufteilung unvollständig":"Differenz: "+eur(Math.abs(posTotal-brutto))}
+<button id="btn-confirm" class="btn-primary" style="margin-bottom:8px" ${!allOk||!balanced||S.gistSaving?"disabled":""}>
+  ${confirmLabel}
 </button>
 <button id="btn-save-only" class="btn-primary" ${!allOk?"disabled":""}>
-  ${icon("save")} Nur speichern
+  ${icon("save")} Nur lokal speichern
 </button>`; }
 
+// ── Result screen ─────────────────────────────────────────────────────────────
 function renderResult(){
   const pos=calcPos();
   const addrLabel=S.invoice.addr==="euref"?"Euref-Campus":S.invoice.addr==="hermannstr"?"Hermannstr.":"unbekannt";
+  const cfg=loadGistConfig();
   const rows=pos.map((p,i)=>`
 <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;margin-bottom:2px;background:${i%2===0?"var(--bg2)":"var(--bg)"};border-radius:var(--radius);font-size:13px">
   <span style="font-weight:500">${p.ksId} – ${p.ksName}</span>
@@ -460,7 +532,7 @@ function renderResult(){
   const bmSection = S.bookmarklet ? `
 <div class="card" style="background:var(--bg2);margin-bottom:14px">
   <p style="font-weight:500;margin-bottom:4px;font-size:13px">${icon("bookmark")} Einmaliges Setup</p>
-  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Diesen Link <strong>einmal</strong> in die Lesezeichenleiste ziehen. Danach nie wieder nötig.</p>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Diesen Link <strong>einmal</strong> in die Lesezeichenleiste ziehen. Danach nie wieder nötig – das Bookmarklet liest immer die aktuellen Daten aus dem Gist.</p>
   <div style="display:flex;gap:8px">
     <a href="${S.bookmarklet}" draggable="true" id="bm-link"
       style="flex:1;padding:8px 12px;border:0.5px solid var(--border2);border-radius:var(--radius);font-size:13px;font-weight:500;text-decoration:none;color:var(--text);background:var(--bg);text-align:center;cursor:grab">
@@ -470,7 +542,10 @@ function renderResult(){
       ${S.copied?icon("check"):icon("copy")} ${S.copied?"Kopiert":"Kopieren"}
     </button>
   </div>
-</div>` : "";
+</div>` : `
+<div class="card" style="background:var(--bg2);margin-bottom:14px">
+  <p style="font-size:13px;color:var(--text2)">${icon("check")} Gist aktualisiert – Bookmarklet zeigt beim nächsten Klick die neuen Werte.</p>
+</div>`;
 
   return `
 <h2 style="margin-bottom:4px">Bereit für Candis</h2>
@@ -483,15 +558,26 @@ ${bmSection}
   <button id="btn-back2" style="flex:1">${icon("edit")} Zurück zur Prüfung</button>
 </div>`; }
 
+// ── Event binding ─────────────────────────────────────────────────────────────
 function attach(){
   if(S.step==="upload"){
     const fi=document.getElementById("fi"),dz=document.getElementById("dz");
     fi?.addEventListener("change",e=>handleFile(e.target.files[0]));
     dz?.addEventListener("dragover",e=>e.preventDefault());
     dz?.addEventListener("drop",e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);});
+    document.getElementById("btn-save-token")?.addEventListener("click",()=>{
+      const val=document.getElementById("token-input")?.value.trim();
+      if(!val) return;
+      saveGistConfig({token:val});
+      render();
+    });
+    document.getElementById("btn-clear-token")?.addEventListener("click",()=>{
+      saveGistConfig({});
+      render();
+    });
   }
   if(S.step==="review"){
-    document.getElementById("btn-back")?.addEventListener("click",()=>set({step:"upload",invoice:null,error:null}));
+    document.getElementById("btn-back")?.addEventListener("click",()=>set({step:"upload",invoice:null,error:null,gistError:null}));
     const saveData=()=>{
       const now=new Date().toISOString(),upd={...S.savedSplits},addr=S.invoice.addr;
       for(const item of S.invoice.items){
@@ -500,11 +586,20 @@ function attach(){
       }
       doSave(upd); return upd;
     };
-    document.getElementById("btn-confirm")?.addEventListener("click",()=>{
+    document.getElementById("btn-confirm")?.addEventListener("click",async ()=>{
       const upd=saveData();
       const pos=calcPos();
-      saveForCandis(pos);
-      set({savedSplits:upd,bookmarklet:makeBM(pos),step:"result"});
+      const cfg=loadGistConfig();
+      set({savedSplits:upd,gistSaving:true,gistError:null});
+      try{
+        const gistId=await gistWrite(pos);
+        const rawUrl=makeRawUrl(gistId);
+        // Only show bookmarklet setup section if this is a new gist
+        const isNew=!cfg.gistId;
+        set({savedSplits:upd,gistSaving:false,bookmarklet:isNew?makeBM(rawUrl):null,step:"result"});
+      } catch(e){
+        set({gistSaving:false,gistError:e.message});
+      }
     });
     document.getElementById("btn-save-only")?.addEventListener("click",()=>{
       const upd=saveData();
@@ -526,7 +621,7 @@ function attach(){
     document.querySelectorAll("input[data-art]").forEach(el=>el.addEventListener("input",()=>updateSplitField(el.dataset.art,parseInt(el.dataset.i),"pct",el.value)));
   }
   if(S.step==="result"){
-    document.getElementById("btn-new")?.addEventListener("click",()=>set({step:"upload",invoice:null,bookmarklet:null,copied:false}));
+    document.getElementById("btn-new")?.addEventListener("click",()=>set({step:"upload",invoice:null,bookmarklet:null,copied:false,gistError:null}));
     document.getElementById("btn-back2")?.addEventListener("click",()=>set({step:"review"}));
     document.getElementById("bm-link")?.addEventListener("click",e=>e.preventDefault());
     document.getElementById("btn-copy")?.addEventListener("click",()=>{
