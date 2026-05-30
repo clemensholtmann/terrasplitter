@@ -208,7 +208,7 @@ function makeBM(pos){
   const panel=document.createElement("div");
   panel.id="terra-bm-panel";
   panel.style.cssText="position:fixed;top:80px;right:24px;z-index:999999;background:#fff;border:1px solid #ccc;border-radius:10px;padding:14px 16px;font-family:system-ui,sans-serif;font-size:13px;color:#1a1a18;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:280px;max-width:340px";
-  let html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><strong style="font-size:14px">Candis Positionen</strong><button onclick="document.getElementById(\\'terra-bm-panel\\').remove()" style="border:none;background:none;cursor:pointer;font-size:18px;color:#888;padding:0;line-height:1">×</button></div>';
+  let html='<div id="terra-bm-handle" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:grab;user-select:none"><strong style="font-size:14px">Candis Positionen</strong><button onclick="document.getElementById(\\'terra-bm-panel\\').remove()" style="border:none;background:none;cursor:pointer;font-size:18px;color:#888;padding:0;line-height:1">×</button></div>';
   pos.forEach(function(p){
     const neg=p.neg?'color:#a32d2d':'color:#1a1a18';
     const label=p.neg?' ⚠ RK':'';
@@ -222,6 +222,30 @@ function makeBM(pos){
   html+='<div style="margin-top:10px;font-size:11px;color:#9b9b97;text-align:center">Brutto · zum Einfügen in Candis</div>';
   panel.innerHTML=html;
   document.body.appendChild(panel);
+  (function(){
+    var handle=document.getElementById("terra-bm-handle");
+    var ox=0,oy=0,startX=0,startY=0;
+    handle.addEventListener("mousedown",function(e){
+      if(e.target.tagName==="BUTTON") return;
+      e.preventDefault();
+      var rect=panel.getBoundingClientRect();
+      startX=e.clientX; startY=e.clientY;
+      ox=rect.left; oy=rect.top;
+      handle.style.cursor="grabbing";
+      function onMove(e){
+        var dx=e.clientX-startX, dy=e.clientY-startY;
+        panel.style.left=(ox+dx)+"px"; panel.style.top=(oy+dy)+"px";
+        panel.style.right="auto";
+      }
+      function onUp(){
+        handle.style.cursor="grab";
+        document.removeEventListener("mousemove",onMove);
+        document.removeEventListener("mouseup",onUp);
+      }
+      document.addEventListener("mousemove",onMove);
+      document.addEventListener("mouseup",onUp);
+    });
+  })();
   panel.querySelectorAll("button[data-val]").forEach(function(btn){
     btn.addEventListener("click",function(){
       navigator.clipboard.writeText(btn.dataset.val).then(function(){
