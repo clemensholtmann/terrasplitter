@@ -356,8 +356,6 @@ function updateSummary(){
   if(df) df.innerHTML=!balanced?`Rechnungsbetrag: ${eur(brutto)} · Differenz: ${eur(Math.abs(posTotal-brutto))}`:"";
   const cb=document.getElementById("btn-confirm");
   if(cb){cb.disabled=!allOk||!balanced;cb.textContent=allOk&&balanced?"Speichern & in Candis übertragen →":!allOk?"Aufteilung unvollständig":"Differenz: "+eur(Math.abs(posTotal-brutto));}
-  const sb=document.getElementById("btn-save-only");
-  if(sb) sb.disabled=!allOk;
   const wb=document.getElementById("warn-diff");
   if(wb) wb.style.display=balanced?"none":"block";
 }
@@ -517,11 +515,8 @@ ${rows}
 </div>
 ${S.gistError?`<p style="font-size:12px;color:var(--danger);margin-bottom:8px">⚠ Gist-Fehler: ${S.gistError}</p>`:''}
 <p style="font-size:12px;color:var(--text3);margin-bottom:8px">${icon("save")} Zuordnungen werden beim Bestätigen für ${addrLabel} gespeichert.</p>
-<button id="btn-confirm" class="btn-primary" style="margin-bottom:8px" ${!allOk||!balanced||S.gistSaving?"disabled":""}>
+<button id="btn-confirm" class="btn-primary" ${!allOk||!balanced||S.gistSaving?"disabled":""}>
   ${confirmLabel}
-</button>
-<button id="btn-save-only" class="btn-primary" ${!allOk?"disabled":""}>
-  ${icon("save")} Nur lokal speichern
 </button>`; }
 
 // ── Result screen ─────────────────────────────────────────────────────────────
@@ -538,12 +533,12 @@ function renderResult(){
 
   const bmSection = S.bookmarklet ? `
 <div class="card" style="background:var(--bg2);margin-bottom:14px">
-  <p style="font-weight:500;margin-bottom:4px;font-size:13px">${icon("bookmark")} Bookmarklet (Netto-Werte)</p>
-  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Diesen Link in die Lesezeichenleiste ziehen. Ein <strong>älteres</strong> Bookmarklet bitte ersetzen – die Netto/Brutto-Anzeige steckt im Bookmarklet selbst. Die Beträge liest es weiterhin immer aktuell aus dem Gist.</p>
+  <p style="font-weight:500;margin-bottom:4px;font-size:13px">${icon("bookmark")} Bookmarklet</p>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Diesen Link in die Lesezeichenleiste ziehen. Ein vorhandenes Bookmarklet dabei ersetzen.</p>
   <div style="display:flex;gap:8px">
     <a href="${S.bookmarklet}" draggable="true" id="bm-link"
       style="flex:1;padding:8px 12px;border:0.5px solid var(--border2);border-radius:var(--radius);font-size:13px;font-weight:500;text-decoration:none;color:var(--text);background:var(--bg);text-align:center;cursor:grab">
-      ${icon("bookmark")} Candis Beleg aufteilen
+      ${icon("bookmark")} Candis Copy
     </a>
     <button id="btn-copy" style="padding:8px 14px">
       ${S.copied?icon("check"):icon("copy")} ${S.copied?"Kopiert":"Kopieren"}
@@ -607,10 +602,6 @@ function attach(){
       } catch(e){
         set({gistSaving:false,gistError:e.message});
       }
-    });
-    document.getElementById("btn-save-only")?.addEventListener("click",()=>{
-      const upd=saveData();
-      set({savedSplits:upd});
     });
     document.querySelectorAll("button[data-add]").forEach(b=>b.addEventListener("click",()=>{
       const art=b.dataset.add,avail=getAvail(S.invoice.addr);
