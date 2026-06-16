@@ -216,14 +216,14 @@ async function parsePDF(file){
   for(const w of allWords)
     if(w.x>=500&&(w.text==="7"||w.text==="19")) taxCol[`${w.page}_${w.y}`]=w.text;
 
-  const items=[],seen=new Set();
+  const items=[];
   const PFAND=/^99[89]\d/;
   const USTOP=/^(BYO|MOR|BAS|AND|SOJ|AHR|wvg|BTR|RHO|OTM|SÖB|NAN|MIV|ÖMA|SBG|II|A)$/;
   for(const k of Object.keys(byPY)){
     const row=byPY[k].sort((a,b)=>a.x-b.x);
     if(!/^\d{6,}$/.test(row[0].text)) continue;
     const artNr=row[0].text;
-    if(PFAND.test(artNr)||seen.has(artNr)) continue;
+    if(PFAND.test(artNr)) continue;
     const{page,y}=row[0];
     let taxCode=null;
     for(let dy=0;dy<=8;dy++){
@@ -245,8 +245,15 @@ async function parsePDF(file){
     }
     const name=nameW.join(" ").trim();
     if(!name) continue;
+    // Gleiche Art.-Nr. mit gleichem Steuersatz (z.B. Nachlieferung / Ersatz fuer
+    // eine ausgelistete Position) zusammenfuehren statt verwerfen.
+    const dup=items.find(it=>it.artNr===artNr&&it.tax===taxCode);
+    if(dup){
+      dup.priceNetto=Math.round((dup.priceNetto+netto)*100)/100;
+      dup.price=Math.round(dup.priceNetto*(1+parseInt(dup.tax)/100)*100)/100;
+      continue;
+    }
     items.push({artNr,name,price:brutto,priceNetto:netto,tax:taxCode});
-    seen.add(artNr);
   }
   return{items,taxNetto,taxBrutto,addr};
 }
