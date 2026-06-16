@@ -144,14 +144,14 @@ function makeBM(rawUrl){
       pos.forEach(function(p){
         var neg=p.neg?"color:#a32d2d":"color:#1a1a18";
         var label=p.neg?" RK":"";
-        var val=p.amount.toFixed(2).replace(".",",");
+        var val=p.netto.toFixed(2).replace(".",",");
         html+="<div style='display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #f0efe9'>"
           +"<span style='flex:1;min-width:0'><span style='font-weight:500'>"+p.ksId+"</span> <span style='color:#6b6b67;font-size:12px'>"+p.ksName+"</span><br><span style='font-size:11px;color:#9b9b97'>"+p.tax+"% MwSt.</span></span>"
           +"<span style='font-weight:500;white-space:nowrap;"+neg+"'>"+val+" \u20ac"+label+"</span>"
           +"<button class='terra-cp' data-val='"+val+"' style='padding:3px 10px;border:1px solid #ccc;border-radius:6px;background:#f7f7f5;cursor:pointer;font-size:12px;white-space:nowrap;font-family:inherit'>Kopieren</button>"
           +"</div>";
       });
-      html+="<div style='margin-top:10px;font-size:11px;color:#9b9b97;text-align:center'>Brutto \u00b7 zum Einf\u00fcgen in Candis</div>";
+      html+="<div style='margin-top:10px;font-size:11px;color:#9b9b97;text-align:center'>Netto \u00b7 zum Einf\u00fcgen in Candis</div>";
       document.getElementById("terra-bm-body").innerHTML=html;
       panel.querySelectorAll(".terra-cp").forEach(function(btn){
         btn.addEventListener("click",function(){
@@ -221,7 +221,7 @@ async function parsePDF(file){
   const USTOP=/^(BYO|MOR|BAS|AND|SOJ|AHR|wvg|BTR|RHO|OTM|SÖB|NAN|MIV|ÖMA|SBG|II|A)$/;
   for(const k of Object.keys(byPY)){
     const row=byPY[k].sort((a,b)=>a.x-b.x);
-    if(!/^\d{6,}$/.test(row[0].text)) continue;
+    if(!/^([A-Z]{1,3}-)?\d{6,}$/.test(row[0].text)) continue;
     const artNr=row[0].text;
     if(PFAND.test(artNr)) continue;
     const{page,y}=row[0];
@@ -533,13 +533,13 @@ function renderResult(){
 <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;margin-bottom:2px;background:${i%2===0?"var(--bg2)":"var(--bg)"};border-radius:var(--radius);font-size:13px">
   <span style="font-weight:500">${p.ksId} – ${p.ksName}</span>
   <span style="color:var(--text2)">${p.tax}% MwSt.</span>
-  <span style="font-weight:500;color:${p.neg?"var(--danger)":"var(--text)"}">${eur(p.amount)}${p.neg?" ⚠":""}</span>
+  <span style="font-weight:500;color:${p.neg?"var(--danger)":"var(--text)"}">${eur(p.netto)}${p.neg?" ⚠":""}</span>
 </div>`).join("");
 
   const bmSection = S.bookmarklet ? `
 <div class="card" style="background:var(--bg2);margin-bottom:14px">
-  <p style="font-weight:500;margin-bottom:4px;font-size:13px">${icon("bookmark")} Einmaliges Setup</p>
-  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Diesen Link <strong>einmal</strong> in die Lesezeichenleiste ziehen. Danach nie wieder nötig – das Bookmarklet liest immer die aktuellen Daten aus dem Gist.</p>
+  <p style="font-weight:500;margin-bottom:4px;font-size:13px">${icon("bookmark")} Bookmarklet (Netto-Werte)</p>
+  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Diesen Link in die Lesezeichenleiste ziehen. Ein <strong>älteres</strong> Bookmarklet bitte ersetzen – die Netto/Brutto-Anzeige steckt im Bookmarklet selbst. Die Beträge liest es weiterhin immer aktuell aus dem Gist.</p>
   <div style="display:flex;gap:8px">
     <a href="${S.bookmarklet}" draggable="true" id="bm-link"
       style="flex:1;padding:8px 12px;border:0.5px solid var(--border2);border-radius:var(--radius);font-size:13px;font-weight:500;text-decoration:none;color:var(--text);background:var(--bg);text-align:center;cursor:grab">
@@ -601,9 +601,9 @@ function attach(){
       try{
         const gistId=await gistWrite(pos);
         const rawUrl=makeRawUrl(gistId);
-        // Only show bookmarklet setup section if this is a new gist
-        const isNew=!cfg.gistId;
-        set({savedSplits:upd,gistSaving:false,bookmarklet:isNew?makeBM(rawUrl):null,step:"result"});
+        // Bookmarklet immer neu anbieten – der Netto/Brutto-Code steckt im
+        // Lesezeichen selbst, ein altes Bookmarklet muss daher ersetzt werden.
+        set({savedSplits:upd,gistSaving:false,bookmarklet:makeBM(rawUrl),step:"result"});
       } catch(e){
         set({gistSaving:false,gistError:e.message});
       }
